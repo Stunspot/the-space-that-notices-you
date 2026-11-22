@@ -140,25 +140,63 @@ function executeEffect(effect, state) {
     }
 
     case 'START_RECORDING': {
-      recStartTime = performance.now();
-      stopRecordingFn = engine.startVideoCapture(
-        SHOWCASE_DURATION * 1000,
-        () => {
-          stopRecordingFn = null;
-          machine.dispatch({ type: 'RECORDING_COMPLETE' });
-        },
-        (msg) => {
-          stopRecordingFn = null;
-          machine.dispatch({ type: 'RECORDING_FAILED', message: msg });
+      const dims = engine.lockCaptureResolution(state.aspect);
+      const startToken = state.transitionSeq;
+
+      const finishCaptureCleanup = () => {
+        audio.endCapture();
+        const rect = viewportFrame.getBoundingClientRect();
+        engine.unlockCaptureResolution(rect.width, rect.height);
+      };
+
+      audio.beginCapture().then((audioTrack) => {
+        // Guard against user cancelling or context loss while AudioContext resumed
+        const live = machine.getState();
+        if (live.recording !== 'recording' || live.transitionSeq !== startToken) {
+          finishCaptureCleanup();
+          return;
         }
-      );
+
+        // Render clean t=0 frame at locked 1:1 HD resolution before starting MediaRecorder
+        choreo.restartShowcase();
+        const u0 = choreo.step(0);
+        engine.render(u0, 16);
+
+        recStartTime = performance.now();
+        const fmt = engine.getPreferredCaptureFormat(Boolean(audioTrack));
+        const audioTag = audioTrack ? 'Stereo Audio' : 'Video Only';
+        statusToast.textContent = `Recording 18s ${fmt.label} (${dims.width}×${dims.height} · ${audioTag})…`;
+
+        stopRecordingFn = engine.startVideoCapture(
+          SHOWCASE_DURATION * 1000,
+          audioTrack,
+          (info) => {
+            stopRecordingFn = null;
+            finishCaptureCleanup();
+            machine.dispatch({ type: 'RECORDING_COMPLETE', info });
+          },
+          (msg) => {
+            stopRecordingFn = null;
+            finishCaptureCleanup();
+            machine.dispatch({ type: 'RECORDING_FAILED', message: msg });
+          }
+        );
+      });
       break;
     }
 
     case 'STOP_RECORDING': {
       const stop = stopRecordingFn;
       stopRecordingFn = null;
-      if (stop) stop();
+      if (stop) {
+        stop();
+      } else {
+        // Stopped before async beginCapture finished
+        audio.endCapture();
+        const rect = viewportFrame.getBoundingClientRect();
+        engine.unlockCaptureResolution(rect.width, rect.height);
+        machine.dispatch({ type: 'RECORDING_COMPLETE' });
+      }
       break;
     }
 
@@ -314,6 +352,7 @@ function renderUI(state) {
   recBadge.classList.toggle('hidden', !showRecBadge);
   btnRecLoop.classList.toggle('recording', state.recording === 'recording');
   btnRecLoop.disabled = state.recording === 'stopping' || state.renderer === 'context_lost';
+  const prefFmt = engine.getPreferredCaptureFormat(true);
   btnRecLoop.textContent =
     state.recording === 'recording'
       ? 'Stop Rec'
@@ -321,7 +360,7 @@ function renderUI(state) {
         ? 'Saving…'
         : state.recording === 'unsupported'
           ? 'Rec N/A'
-          : 'Rec 18s Loop';
+          : `Rec 18s ${prefFmt.label}`;
   btnSnapPng.disabled = state.renderer === 'context_lost';
 
   // Canvas drag cursor

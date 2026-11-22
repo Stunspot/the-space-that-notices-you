@@ -416,7 +416,7 @@ export function transition(state, event) {
         return reject(state, 'NOT_RECORDING', 'No active recording to stop.');
       }
       next.recording = 'stopping';
-      next.statusMessage = 'Finalizing WebM loop…';
+      next.statusMessage = 'Finalizing 18s clip…';
       effects.push({ type: 'STOP_RECORDING' });
       return accept(state, next, effects);
     }
@@ -426,7 +426,13 @@ export function transition(state, event) {
         return reject(state, 'STALE_RECORDING_COMPLETE', 'Ignored stale recording completion.');
       }
       next.recording = 'idle';
-      next.statusMessage = 'Saved 18-second showcase loop (WebM).';
+      const info = event.info;
+      if (info && info.label && info.width && info.height) {
+        const audioTag = info.hasAudio ? 'Stereo Audio' : 'Video Only';
+        next.statusMessage = `Saved 18s ${info.label} (${info.width}×${info.height} · ${audioTag}).`;
+      } else {
+        next.statusMessage = 'Saved 18-second showcase loop.';
+      }
       return accept(state, next, effects);
     }
 

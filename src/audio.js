@@ -23,7 +23,11 @@ export class SoundEngine {
   constructor() {
     this.ctx = null;
     this.enabled = false;
+    this.capturing = false;
     this.masterGain = null;
+    this.speakerGain = null;
+    this.captureGain = null;
+    this.captureDest = null;
     this.nodes = null;
 
     this.lastChimeTime = 0;
@@ -37,8 +41,32 @@ export class SoundEngine {
     return this.enabled;
   }
 
+  _isActive() {
+    return this.enabled || this.capturing;
+  }
+
   isSupported() {
     return Boolean(window.AudioContext || window.webkitAudioContext);
+  }
+
+  _syncOutputGains() {
+    if (!this.ctx || !this.masterGain || !this.speakerGain) return;
+    const now = this.ctx.currentTime;
+    const active = this._isActive();
+
+    this.masterGain.gain.cancelScheduledValues(now);
+    this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, now);
+    this.masterGain.gain.linearRampToValueAtTime(active ? 0.85 : 0.0, now + 0.16);
+
+    this.speakerGain.gain.cancelScheduledValues(now);
+    this.speakerGain.gain.setValueAtTime(this.speakerGain.gain.value, now);
+    this.speakerGain.gain.linearRampToValueAtTime(this.enabled ? 0.72 : 0.0, now + 0.22);
+
+    if (this.captureGain) {
+      this.captureGain.gain.cancelScheduledValues(now);
+      this.captureGain.gain.setValueAtTime(this.captureGain.gain.value, now);
+      this.captureGain.gain.linearRampToValueAtTime(this.capturing ? 0.92 : 0.0, now + 0.12);
+    }
   }
 
   async setEnabled(targetOn) {
@@ -60,23 +88,16 @@ export class SoundEngine {
 
       const wasEnabled = this.enabled;
       this.enabled = Boolean(targetOn);
-      const now = this.ctx.currentTime;
+      this._syncOutputGains();
 
-      this.masterGain.gain.cancelScheduledValues(now);
-      this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, now);
-
-      if (this.enabled) {
-        this.masterGain.gain.linearRampToValueAtTime(0.62, now + 0.24);
-        if (!wasEnabled) {
-          this._triggerWelcomeChord();
-        }
-      } else {
-        this.masterGain.gain.linearRampToValueAtTime(0.0, now + 0.22);
+      if (this.enabled && !wasEnabled) {
+        this._triggerWelcomeChord();
       }
 
       return { ok: true, enabled: this.enabled, unsupported: false, message: null };
     } catch (err) {
       this.enabled = false;
+      this._syncOutputGains();
       return {
         ok: false,
         enabled: false,
@@ -84,6 +105,40 @@ export class SoundEngine {
         message: err?.message || 'Audio playback could not start.',
       };
     }
+  }
+
+  /**
+   * Prepare stereo Web Audio MediaStreamTrack for synchronized MP4/WebM capture.
+   * Works both when speakers are enabled AND when muted (keeps speakers silent if muted).
+   */
+  async beginCapture() {
+    if (!this.isSupported()) return null;
+    try {
+      if (!this.ctx) {
+        this._init();
+      }
+      if (!this.ctx || !this.captureDest) return null;
+      if (this.ctx.state === 'suspended') {
+        await this.ctx.resume();
+      }
+      this.capturing = true;
+      this._syncOutputGains();
+      // Fresh opening Threshold chord synced to t=0 of the 18s showcase loop
+      this._triggerWelcomeChord();
+      const tracks = this.captureDest.stream.getAudioTracks();
+      return tracks[0] || null;
+    } catch (err) {
+      console.warn('[SoundEngine] Could not attach stereo audio to video capture:', err);
+      this.capturing = false;
+      this._syncOutputGains();
+      return null;
+    }
+  }
+
+  endCapture() {
+    if (!this.capturing) return;
+    this.capturing = false;
+    this._syncOutputGains();
   }
 
   async toggle() {
@@ -109,8 +164,24 @@ export class SoundEngine {
     const master = ctx.createGain();
     master.gain.value = 0.0;
     master.connect(comp);
-    comp.connect(ctx.destination);
     this.masterGain = master;
+
+    // Independent speaker bus vs. MediaStream capture bus
+    const speakerGain = ctx.createGain();
+    speakerGain.gain.value = 0.0;
+    comp.connect(speakerGain);
+    speakerGain.connect(ctx.destination);
+    this.speakerGain = speakerGain;
+
+    if (typeof ctx.createMediaStreamDestination === 'function') {
+      const captureGain = ctx.createGain();
+      captureGain.gain.value = 0.0;
+      const captureDest = ctx.createMediaStreamDestination();
+      comp.connect(captureGain);
+      captureGain.connect(captureDest);
+      this.captureGain = captureGain;
+      this.captureDest = captureDest;
+    }
 
     // --- Stereo Cathedral Space Reverb (Cross-Coupled Filtered Delay Network) ---
     const revIn = ctx.createGain();
@@ -303,7 +374,7 @@ export class SoundEngine {
   }
 
   update(u) {
-    if (!this.enabled || !this.ctx || !this.nodes) return;
+    if (!this._isActive() || !this.ctx || !this.nodes) return;
     const now = this.ctx.currentTime;
     const n = this.nodes;
     const intens = 0.45 + 0.55 * u.intensity;
@@ -383,7 +454,7 @@ export class SoundEngine {
   }
 
   triggerFoldRelease(strength = 0.8) {
-    if (!this.enabled || !this.ctx || !this.nodes) return;
+    if (!this._isActive() || !this.ctx || !this.nodes) return;
     const now = this.ctx.currentTime;
 
     // Deep obsidian sub-drop synced to the spherical inversion wave
@@ -417,7 +488,7 @@ export class SoundEngine {
   }
 
   triggerRelicChime(velocity = 0.2) {
-    if (!this.enabled || !this.ctx || !this.nodes) return;
+    if (!this._isActive() || !this.ctx || !this.nodes) return;
     const now = this.ctx.currentTime;
     if (now - this.lastChimeTime < 0.11) return;
     this.lastChimeTime = now;

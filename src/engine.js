@@ -93,6 +93,9 @@ export class RenderEngine {
     this.echoIndex = 0;
     this.texturesLoaded = { ornament: false, mandala: false };
     this.contextLost = false;
+    this.captureLocked = false;
+    this._savedQuality = this.quality;
+    this._savedRenderScale = this.renderScale;
     this.onContextLost = null;
     this.onContextRestored = null;
 
@@ -314,9 +317,11 @@ export class RenderEngine {
   }
 
   resize(cssWidth, cssHeight) {
+    if (this.captureLocked) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2.0);
-    const w = Math.max(2, Math.floor(cssWidth * dpr));
-    const h = Math.max(2, Math.floor(cssHeight * dpr));
+    // Keep even pixel dimensions for crisp hardware video encoding
+    const w = Math.max(2, Math.floor(cssWidth * dpr) & ~1);
+    const h = Math.max(2, Math.floor(cssHeight * dpr) & ~1);
     if (w === this.width && h === this.height) return;
 
     this.width = w;
@@ -325,7 +330,6 @@ export class RenderEngine {
     this.canvas.height = h;
 
     if (this.mode === 'webgl2' && this.gl) {
-      // Cap internal raymarch buffer around ~1280px max dimension for silky 60fps
       const maxDim = Math.max(w, h);
       const capScale = maxDim > 1360 ? 1360 / maxDim : 1.0;
       const effScale = capScale * this.renderScale;
@@ -333,7 +337,67 @@ export class RenderEngine {
     }
   }
 
+  /**
+   * Lock crisp, 1:1 native even-aligned HD resolution & full shader quality
+   * before starting video recording (eliminates blurry low-res FBO upscaling
+   * and mid-recording adaptive resolution drops).
+   */
+  lockCaptureResolution(aspectMode = 'full') {
+    this._savedQuality = this.quality;
+    this._savedRenderScale = this.renderScale;
+    this.captureLocked = true;
+    this.quality = 0.96;
+    this.renderScale = 1.0;
+
+    // Choose 1080p on smooth GPUs, 720p on heavier GPUs — always crisp 1:1 native pixels
+    const use1080p = this.fpsEma >= 36;
+    let targetW;
+    let targetH;
+
+    if (aspectMode === 'cinema') {
+      targetW = use1080p ? 1920 : 1280;
+      targetH = use1080p ? 1080 : 720;
+    } else if (aspectMode === 'portrait') {
+      targetW = use1080p ? 1080 : 720;
+      targetH = use1080p ? 1920 : 1280;
+    } else {
+      const aspect = this.width / Math.max(1, this.height);
+      const maxEdge = use1080p ? 1920 : 1280;
+      if (aspect >= 1) {
+        targetW = maxEdge;
+        targetH = Math.round(maxEdge / aspect);
+      } else {
+        targetH = maxEdge;
+        targetW = Math.round(maxEdge * aspect);
+      }
+      targetW = Math.max(2, targetW & ~1);
+      targetH = Math.max(2, targetH & ~1);
+    }
+
+    this.width = targetW;
+    this.height = targetH;
+    this.canvas.width = targetW;
+    this.canvas.height = targetH;
+
+    if (this.mode === 'webgl2' && this.gl) {
+      this._rebuildFBOs(this.gl, targetW, targetH);
+    }
+
+    return { width: targetW, height: targetH };
+  }
+
+  unlockCaptureResolution(cssWidth, cssHeight) {
+    if (!this.captureLocked) return;
+    this.captureLocked = false;
+    this.quality = this._savedQuality;
+    this.renderScale = this._savedRenderScale;
+    this.width = 1;
+    this.height = 1;
+    this.resize(cssWidth, cssHeight);
+  }
+
   _adaptQuality(dtMs) {
+    if (this.captureLocked) return;
     if (dtMs <= 0 || dtMs > 250) return;
     const fps = 1000 / dtMs;
     this.fpsEma = this.fpsEma * 0.92 + fps * 0.08;
@@ -574,7 +638,38 @@ export class RenderEngine {
     return typeof this.canvas.captureStream === 'function' && typeof MediaRecorder !== 'undefined';
   }
 
-  startVideoCapture(durationMs, onDone, onError) {
+  getPreferredCaptureFormat(hasAudio = true) {
+    if (typeof MediaRecorder === 'undefined') {
+      return { mimeType: '', ext: 'mp4', label: 'MP4' };
+    }
+    const mp4WithAudio = [
+      'video/mp4;codecs=avc1.640028,mp4a.40.2',
+      'video/mp4;codecs=avc1.4D4028,mp4a.40.2',
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4',
+    ];
+    const mp4VideoOnly = [
+      'video/mp4;codecs=avc1.640028',
+      'video/mp4;codecs=avc1.4D4028',
+      'video/mp4;codecs=avc1.42E01E',
+      'video/mp4;codecs=avc1',
+      'video/mp4',
+    ];
+    const webmCandidates = hasAudio
+      ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+      : ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+
+    const mp4List = hasAudio ? mp4WithAudio : mp4VideoOnly;
+    const mp4Match = mp4List.find((m) => MediaRecorder.isTypeSupported(m));
+    if (mp4Match) {
+      return { mimeType: mp4Match, ext: 'mp4', label: 'MP4' };
+    }
+    const webmMatch = webmCandidates.find((m) => MediaRecorder.isTypeSupported(m)) || '';
+    return { mimeType: webmMatch, ext: 'webm', label: 'WebM' };
+  }
+
+  startVideoCapture(durationMs, audioTrack, onDone, onError) {
     if (!this.supportsVideoCapture()) {
       if (onError) onError('Video recording is not supported in this browser.');
       return null;
@@ -582,7 +677,7 @@ export class RenderEngine {
 
     let settled = false;
     let stopTimer = null;
-    let stream = null;
+    let videoStream = null;
     let recorder = null;
 
     const cleanupStream = () => {
@@ -590,13 +685,13 @@ export class RenderEngine {
         clearTimeout(stopTimer);
         stopTimer = null;
       }
-      if (stream) {
+      if (videoStream) {
         try {
-          stream.getTracks().forEach((t) => t.stop());
+          videoStream.getVideoTracks().forEach((t) => t.stop());
         } catch {
           // Ignore track cleanup errors on already-ended streams
         }
-        stream = null;
+        videoStream = null;
       }
     };
 
@@ -608,17 +703,25 @@ export class RenderEngine {
     };
 
     try {
-      const mimeCandidates = [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm',
-      ];
-      const mimeType = mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m)) || '';
-      stream = this.canvas.captureStream(60);
-      recorder = new MediaRecorder(stream, {
-        mimeType: mimeType || undefined,
-        videoBitsPerSecond: 8_000_000,
-      });
+      const hasAudio = Boolean(audioTrack && audioTrack.readyState === 'live');
+      const fmt = this.getPreferredCaptureFormat(hasAudio);
+      videoStream = this.canvas.captureStream(60);
+      const tracks = [...videoStream.getVideoTracks()];
+      if (hasAudio) {
+        tracks.push(audioTrack);
+      }
+      const combinedStream = new MediaStream(tracks);
+
+      const videoBitrate = Math.max(this.width, this.height) >= 1600 ? 20_000_000 : 14_000_000;
+      const options = {
+        videoBitsPerSecond: videoBitrate,
+        audioBitsPerSecond: 192_000,
+      };
+      if (fmt.mimeType) {
+        options.mimeType = fmt.mimeType;
+      }
+
+      recorder = new MediaRecorder(combinedStream, options);
       const chunks = [];
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunks.push(e.data);
@@ -626,22 +729,31 @@ export class RenderEngine {
       recorder.onstop = () => {
         if (settled) return;
         settled = true;
+        const captureInfo = {
+          ext: fmt.ext,
+          label: fmt.label,
+          mimeType: fmt.mimeType || recorder.mimeType || `video/${fmt.ext}`,
+          width: this.width,
+          height: this.height,
+          hasAudio,
+        };
         cleanupStream();
         if (chunks.length > 0) {
-          const blob = new Blob(chunks, { type: mimeType || 'video/webm' });
+          const blob = new Blob(chunks, { type: captureInfo.mimeType });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = 'the-space-that-notices-you-18s-loop.webm';
+          a.download = `the-space-that-notices-you-18s-loop.${fmt.ext}`;
           a.click();
           setTimeout(() => URL.revokeObjectURL(url), 4000);
         }
-        if (onDone) onDone();
+        if (onDone) onDone(captureInfo);
       };
       recorder.onerror = (err) => {
         failOnce(err?.error?.message || err?.message || 'Recording error');
       };
-      recorder.start(250);
+      // Larger timeslice (1000ms) produces cleaner MP4 moof/mdat fragments with lower overhead
+      recorder.start(1000);
       stopTimer = setTimeout(() => {
         if (recorder && recorder.state === 'recording') {
           try {

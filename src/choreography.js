@@ -355,7 +355,13 @@ export class Choreography {
       this.time += safeDt * motionScale;
 
       if (this.mode === 'showcase') {
+        const prevS = this.showcaseTime / SHOWCASE_DURATION;
         this.showcaseTime = (this.showcaseTime + safeDt) % SHOWCASE_DURATION;
+        const currS = this.showcaseTime / SHOWCASE_DURATION;
+        // Fire choreographed Resonant Fold audio/visual climax right at s = 0.49
+        if (prevS < 0.49 && currS >= 0.49 && this.onFoldRelease) {
+          this.onFoldRelease(0.95, 0.0, 0.04);
+        }
       } else {
         if (this.returning) {
           // Gracefully glide to Echoed Return (0.92) then settle near 0.02
