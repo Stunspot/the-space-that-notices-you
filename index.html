@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>THE SPACE THAT NOTICES YOU</title>
+  <meta name="description" content="An interactive real-time spatial artwork interpreting the initiatory N,N-DMT encounter — a threshold crossed, an impossibly inhabited space, reciprocal attention, and an echoed return." />
+  <meta property="og:title" content="THE SPACE THAT NOTICES YOU" />
+  <meta property="og:image" content="./assets/poster_still.jpg" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- Main Stage (supports Full, 16:9 Cinema, and 9:16 Portrait framing) -->
+  <div id="stage-shell" class="stage-shell aspect-full">
+    <div id="viewport-frame" class="viewport-frame">
+      <canvas id="scene-canvas" aria-label="The Space That Notices You — interactive real-time spatial artwork"></canvas>
+      <!-- Subtle non-blocking capture recording pulse indicator -->
+      <div id="rec-badge" class="rec-badge hidden" aria-live="polite">
+        <span class="rec-dot"></span>
+        <span id="rec-timer">REC 0.0 / 18.0s</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Peripheral HUD (completely hidden in Clean Capture Mode) -->
+  <header id="hud-top" class="hud-top">
+    <div class="title-block">
+      <h1 class="work-title">THE SPACE THAT NOTICES YOU</h1>
+      <div class="phase-readout">
+        <span id="phase-numeral" class="phase-numeral">I</span>
+        <span id="phase-name" class="phase-name">Threshold of Stillness</span>
+        <span id="state-whisper" class="state-whisper"></span>
+      </div>
+    </div>
+
+    <div class="top-actions">
+      <button id="btn-guide" class="pill-btn" type="button" aria-expanded="false" aria-controls="guide-drawer">
+        <span class="pill-icon" aria-hidden="true">?</span>
+        <span>What am I seeing?</span>
+      </button>
+      <button id="btn-audio" class="pill-btn" type="button" aria-pressed="false" title="Toggle gesture-enabled spatial sound (A)">
+        <span class="pill-icon" aria-hidden="true">◇</span>
+        <span id="audio-label">Sound Off</span>
+      </button>
+      <button id="btn-showcase" class="pill-btn" type="button" aria-pressed="false" title="Toggle deterministic 18-second seamless showcase loop (L)">
+        <span class="pill-icon" aria-hidden="true">↻</span>
+        <span id="showcase-label">18s Loop</span>
+      </button>
+      <button id="btn-capture-mode" class="pill-btn pill-accent" type="button" title="Clean capture mode & aspect framing (C)">
+        <span class="pill-icon" aria-hidden="true">⬚</span>
+        <span>Capture</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Subtle Peripheral Interaction Hint (fades after first gestures) -->
+  <div id="gesture-whisper" class="gesture-whisper" aria-live="polite">
+    <span>Move to guide gaze</span>
+    <span class="sep">·</span>
+    <span>Drag to turn the Relic</span>
+    <span class="sep">·</span>
+    <span>Scroll or double-click to unfold</span>
+    <span class="sep">·</span>
+    <span>Hold &amp; release (or Space) for Resonant Fold</span>
+    <span class="sep">·</span>
+    <span>Rest hands for Stillness</span>
+  </div>
+
+  <!-- Bottom Control Dock -->
+  <footer id="hud-bottom" class="hud-bottom">
+    <div class="dock-inner">
+      <!-- Phase Timeline & Scrubbable Arc -->
+      <div class="phase-bar" role="group" aria-label="Initiation phases">
+        <button class="phase-pip active" data-phase="0.02" type="button" title="I. Threshold of Stillness"><span>I</span></button>
+        <button class="phase-pip" data-phase="0.24" type="button" title="II. The Chrysanthemum Seam"><span>II</span></button>
+        <button class="phase-pip" data-phase="0.48" type="button" title="III. The Chamber That Notices"><span>III</span></button>
+        <button class="phase-pip" data-phase="0.73" type="button" title="IV. Glossolalia of Form"><span>IV</span></button>
+        <button class="phase-pip" data-phase="0.90" type="button" title="V. The Echoed Return"><span>V</span></button>
+        <div class="arc-track" id="arc-track" title="Click or drag along the initiatory arc">
+          <div id="arc-fill" class="arc-fill"></div>
+        </div>
+      </div>
+
+      <!-- Primary Playback, Return, Intensity & Comfort Controls -->
+      <div class="control-row">
+        <div class="control-group">
+          <button id="btn-pause" class="ctrl-btn" type="button" aria-pressed="false" title="Pause / Resume (P)">Pause</button>
+          <button id="btn-return" class="ctrl-btn" type="button" title="Gracefully return to the opening threshold (R)">Return</button>
+          <button id="btn-unfold" class="ctrl-btn" type="button" title="Unfold / invert the Impossible Relic (U)">Unfold Relic</button>
+        </div>
+
+        <div class="control-group slider-group">
+          <label for="slider-intensity" class="ctrl-label">Intensity</label>
+          <input id="slider-intensity" class="ctrl-slider" type="range" min="0.2" max="1.0" step="0.02" value="0.80" />
+        </div>
+
+        <div class="control-group">
+          <button id="btn-stabilize" class="ctrl-btn" type="button" aria-pressed="false" title="Lock camera horizon & remove drift (K)">Stabilize</button>
+          <button id="btn-reduced" class="ctrl-btn" type="button" aria-pressed="false" title="Slow motion & soften transitions (M)">Reduced Motion</button>
+        </div>
+
+        <div class="control-group framing-group" role="group" aria-label="Viewport framing">
+          <button class="ctrl-btn aspect-btn active" data-aspect="full" type="button" title="Full viewport">Full</button>
+          <button class="ctrl-btn aspect-btn" data-aspect="cinema" type="button" title="16:9 landscape cinema framing">16:9</button>
+          <button class="ctrl-btn aspect-btn" data-aspect="portrait" type="button" title="9:16 vertical portrait framing">9:16</button>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Capture Mode Floating Bar (invisible until hover or active in Capture Mode) -->
+  <div id="capture-bar" class="capture-bar hidden">
+    <div class="capture-bar-inner">
+      <span class="capture-label">Clean Capture</span>
+      <button class="ctrl-btn aspect-btn" data-aspect="full" type="button">Full</button>
+      <button class="ctrl-btn aspect-btn" data-aspect="cinema" type="button">16:9</button>
+      <button class="ctrl-btn aspect-btn" data-aspect="portrait" type="button">9:16</button>
+      <button id="btn-snap-png" class="ctrl-btn" type="button" title="Save clean PNG still (S)">PNG Still</button>
+      <button id="btn-rec-loop" class="ctrl-btn ctrl-rec" type="button" title="Record exact 18-second seamless showcase loop (WebM)">Rec 18s Loop</button>
+      <button id="btn-exit-capture" class="ctrl-btn" type="button" title="Exit Clean Capture Mode (C / Esc)">Exit [C]</button>
+    </div>
+  </div>
+
+  <!-- Discreet Peripheral "What am I seeing?" Discovery Drawer -->
+  <aside id="guide-drawer" class="guide-drawer hidden" aria-label="What am I seeing? Guide">
+    <div class="guide-header">
+      <div>
+        <div class="guide-eyebrow">What am I seeing?</div>
+        <h2 class="guide-title">Initiatory Motifs &amp; Visual Grammar</h2>
+      </div>
+      <button id="btn-close-guide" class="close-btn" type="button" aria-label="Close guide">×</button>
+    </div>
+
+    <p class="guide-disclaimer" id="guide-disclaimer"></p>
+
+    <div class="guide-tabs" id="guide-tabs" role="tablist"></div>
+
+    <div class="guide-body" id="guide-body"></div>
+
+    <details class="guide-interactions">
+      <summary>How Interaction Reveals the World</summary>
+      <div id="guide-interaction-list" class="interaction-list"></div>
+    </details>
+
+    <div class="guide-sources">
+      <div class="sources-heading">Primary Research &amp; Verifiable Sources</div>
+      <ul id="guide-sources-list" class="sources-list"></ul>
+    </div>
+  </aside>
+
+  <!-- Non-blocking transient status toast (replaces alert(), surfaces state & recovery feedback) -->
+  <div id="status-toast" class="status-toast hidden" role="status" aria-live="polite"></div>
+
+  <!-- Subtle Engine Status Badge (only shown if Canvas 2D fallback activates) -->
+  <div id="fallback-notice" class="fallback-notice hidden" role="status">
+    WebGL2 unavailable — running interactive 2D sanctuary fallback.
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

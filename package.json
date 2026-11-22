@@ -1,0 +1,11 @@
+{
+  "name": "the-space-that-notices-you",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Real-time WebGL2 spatial artwork interpreting the initiatory N,N-DMT encounter through 5D dodecahedral folding geometry, reciprocal attention, procedural spatial audio, and explicit state-machine architecture.",
+  "scripts": {
+    "start": "python -m http.server 8742",
+    "test": "node --test tests/stateMachine.test.mjs"
+  }
+}
